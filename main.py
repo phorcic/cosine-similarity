@@ -1,34 +1,17 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List
-import numpy as np
 import torch
-import torch.nn as nn
-from transformers import AutoTokenizer, AutoModel
+from sentence_transformers import SentenceTransformer
 
 app = FastAPI()
-
-# Load pre-trained model and tokenizer
-model_name = "sentence-transformers/all-MiniLM-L6-v2"  
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModel.from_pretrained(model_name)
-
-def get_embedding(text):
-    """
-    Expects a str as argument and returns embedding of the sentence as a torch.tensor()
-    """
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
-    with torch.no_grad():
-        outputs = model(**inputs)
-    
-    embeddings = outputs.last_hidden_state.mean(dim=1)
-    return embeddings
 
 class ArticleTitles(BaseModel):
     reference: str
     other: List[str]
 
-# Access UI on http://127.0.0.1:8000/docs
+# run uvicorn main:app --reload
+# and ccess UI at http://127.0.0.1:8000/docs
 @app.post("/compare-titles/")
 async def compare_titles(titles: ArticleTitles):
     """
@@ -41,18 +24,16 @@ async def compare_titles(titles: ArticleTitles):
     reference = titles.reference
     other = titles.other
 
-    # Compute embeddings
-    reference_embedding = get_embedding(reference)
-    other_embeddings = [get_embedding(title) for title in other]
+    # compute embeddings
+    model = SentenceTransformer("all-MiniLM-L6-v2")
+    sentences = [reference] + other
+    embeddings = model.encode(sentences)
 
-    # Compute similarity and return most similar
-    cos = nn.CosineSimilarity(dim=1)
-    similarities = []
-    for embedding in other_embeddings:
-        similarity = cos(reference_embedding, embedding)
-        similarities.append(similarity)
+    # compute similarity and return top result
+    # by default, this uses cosine: https://www.sbert.net/docs/package_reference/sentence_transformer/SentenceTransformer.html#sentence_transformers.SentenceTransformer.similarity
+    similarities = model.similarity(embeddings, embeddings)[1:, 0]
 
-    most_similar_index = np.argmax(similarities)
-    top_result = other[most_similar_index]
+    most_similar_index = torch.argmax(similarities) + 1
+    top_result = sentences[most_similar_index]
 
     return { "top_result": top_result }
